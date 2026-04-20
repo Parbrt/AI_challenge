@@ -93,3 +93,49 @@ def make_overlay(original_img: Image.Image, heatmap_tensor: torch.Tensor) -> Ima
     heatmap_rgb = (_COLORMAP(heatmap_norm)[:, :, :3] * 255).astype(np.uint8)
     heatmap_pil = Image.fromarray(heatmap_rgb).resize(original_img.size, Image.Resampling.BILINEAR)
     return Image.blend(original_img.convert("RGB"), heatmap_pil, alpha=0.5)
+
+
+# ── UI ──────────────────────────────────────────────────────────────────────
+
+st.title("Détection de défauts — EfficientAD")
+st.caption("Modèle : Teacher (ResNet18) + Student entraîné sur images normales")
+
+class_name = st.selectbox(
+    "Classe produit",
+    ["bottle", "cable", "carpet", "hazelnut", "screw"],
+)
+
+uploaded = st.file_uploader("Charger une image (PNG ou JPG)", type=["png", "jpg", "jpeg"])
+
+threshold = st.slider("Seuil d'anomalie", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
+
+if uploaded is not None and st.button("Analyser"):
+    try:
+        img = Image.open(uploaded).convert("RGB")
+    except Exception:
+        st.error("Impossible de lire l'image. Vérifiez que le fichier est valide.")
+        st.stop()
+
+    try:
+        teacher, device = load_teacher()
+        student = load_student(class_name)
+    except FileNotFoundError:
+        st.error(f"Modèle introuvable : `src/model/student_{class_name}.pth`")
+        st.stop()
+
+    img_tensor = TRANSFORM(img).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        heatmap = get_anomaly_map(teacher, student, img_tensor)[0]
+
+    score = compute_score(heatmap)
+    overlay = make_overlay(img, heatmap)
+
+    if score >= threshold:
+        st.error(f"Défectueuse — Score : {score:.3f}")
+    else:
+        st.success(f"Normale — Score : {score:.3f}")
+
+    col1, col2 = st.columns(2)
+    col1.image(img, caption="Image originale", use_container_width=True)
+    col2.image(overlay, caption="Heatmap d'anomalie", use_container_width=True)
