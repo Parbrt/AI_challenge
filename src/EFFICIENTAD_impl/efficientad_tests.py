@@ -18,6 +18,9 @@ from tqdm import tqdm
 
 from src.utils.Dataset import TrainDataset
 from src.utils.const import PATH, CLASSES
+from src.EFFICIENTAD_impl.visualisation import (save_confusion_matrix, save_roc_curve,
+                           save_pixel_roc_curve, save_comparison_roc,
+                           save_summary_bar_chart)
 
 
 # =============================================================================
@@ -52,6 +55,7 @@ class Student(nn.Module):
             nn.Conv2d(3,    64, 4, stride=2, padding=1), nn.ReLU(),
             nn.Conv2d(64,  128, 4, stride=2, padding=1), nn.ReLU(),
             nn.Conv2d(128, 256, 4, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(256, 256, 3, padding=1), nn.ReLU(),
             nn.Conv2d(256, 256, 4, stride=2, padding=1), nn.ReLU(),
             nn.Conv2d(256, 256, 3, padding=1),
         )
@@ -132,11 +136,10 @@ def get_anomaly_map(teacher, student, images):
 
     return heatmap
 
-
 def train(teacher, student, train_loader, epochs, device):
-    """Entraîne le Student à imiter le Teacher."""
 
     optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     for epoch in range(1, epochs + 1):
         student.train()
@@ -164,10 +167,12 @@ def train(teacher, student, train_loader, epochs, device):
             total_loss += loss.item()
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
+        scheduler.step()
+
         avg_loss = total_loss / len(train_loader)
         if epoch % 5 == 0 or epoch == 1:
-            print(f"  Epoch {epoch:3d}/{epochs}  loss = {avg_loss:.5f}")
-
+            lr = optimizer.param_groups[0]['lr']
+            print(f"  Epoch {epoch:3d}/{epochs}  loss = {avg_loss:.5f}  lr = {lr:.6f}")
 
 def compute_norm_stats(teacher, student, train_loader, device):
     """Calcule mean/std des scores sur images normales."""
@@ -189,7 +194,6 @@ def compute_norm_stats(teacher, student, train_loader, device):
 
 
 def evaluate(teacher, student, test_loader, device, score_mean, score_std):
-    """Évalue et retourne les métriques AUROC et F1."""
 
     student.eval()
     img_scores, img_labels = [], []
@@ -199,12 +203,11 @@ def evaluate(teacher, student, test_loader, device, score_mean, score_std):
         for images, masks, labels in tqdm(test_loader, desc="Évaluation", leave=False):
             images = images.to(device)
             heatmap = get_anomaly_map(teacher, student, images)
-
-            # Normaliser
             heatmap = (heatmap - score_mean) / (score_std + 1e-8)
 
             for i in range(images.shape[0]):
-                img_scores.append(heatmap[i].max().item())
+                topk = int(0.01 * heatmap[i].numel())
+                img_scores.append(heatmap[i].reshape(-1).topk(topk).values.mean().item())
                 img_labels.append(int(labels[i]))
                 px_scores.append(heatmap[i].cpu().numpy().ravel())
                 px_labels.append(masks[i].numpy().ravel())
@@ -214,20 +217,18 @@ def evaluate(teacher, student, test_loader, device, score_mean, score_std):
     px_scores = np.concatenate(px_scores)
     px_labels = np.concatenate(px_labels).astype(int)
 
-    # AUROC
-    img_auroc = roc_auc_score(img_labels, img_scores)
-    px_auroc = roc_auc_score(px_labels, px_scores)
-
-    # F1 optimal
     fpr, tpr, thresholds = roc_curve(img_labels, img_scores)
     best_thresh = thresholds[np.argmax(tpr - fpr)]
-    img_f1 = f1_score(img_labels, (img_scores >= best_thresh).astype(int))
 
     return {
-        "image_auroc": img_auroc,
-        "pixel_auroc": px_auroc,
-        "image_f1": img_f1,
+        "image_auroc": roc_auc_score(img_labels, img_scores),
+        "pixel_auroc": roc_auc_score(px_labels, px_scores),
+        "image_f1": f1_score(img_labels, (img_scores >= best_thresh).astype(int)),
         "threshold": best_thresh,
+        "img_scores": img_scores,
+        "img_labels": img_labels,
+        "px_scores": px_scores,
+        "px_labels": px_labels,
     }
 
 
@@ -235,69 +236,85 @@ def evaluate(teacher, student, test_loader, device, score_mean, score_std):
 #  MAIN
 # =============================================================================
 
+
 if __name__ == "__main__":
 
-    CLASS_NAME = "bottle"
-    EPOCHS = 30
+    RUN_CLASSES = ["bottle", "carpet", "hazelnut", "screw", "cable"]
+    EPOCHS = 50
     BATCH_SIZE = 16
     IMG_SIZE = 256
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"Device    : {DEVICE}")
-    print(f"Catégorie : {CLASS_NAME}")
-    print(f"Epochs    : {EPOCHS}\n")
-
-    train_transform = T.Compose([
-        T.Resize((IMG_SIZE, IMG_SIZE)),
-        T.RandomHorizontalFlip(),
-        T.RandomVerticalFlip(),
-        T.RandomRotation(15),
-        T.ColorJitter(brightness=0.1, contrast=0.1),
-        T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-
-    # Pour le test : PAS d'augmentation, juste resize + normalize
-    test_transform = T.Compose([
+    transform = T.Compose([
         T.Resize((IMG_SIZE, IMG_SIZE)),
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
-    # Datasets
-    train_ds = TrainDataset(root_path=PATH, classes=[CLASS_NAME],
-                            transform=train_transform, multiplier=3)
-    test_ds = TestDataset(root_path=PATH, class_name=CLASS_NAME,
-                          transform=test_transform, img_size=IMG_SIZE)
+    all_metrics = {}
+    all_raw = {}
 
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
+    for CLASS_NAME in RUN_CLASSES:
 
-    # Modèles
-    teacher = Teacher().to(DEVICE).eval()
-    student = Student().to(DEVICE)
+        print(f"\n{'='*50}")
+        print(f"  {CLASS_NAME}")
+        print(f"{'='*50}")
 
-    # Entraîner
-    print("Entraînement...")
-    train(teacher, student, train_loader, EPOCHS, DEVICE)
+        train_ds = TrainDataset(root_path=PATH, classes=[CLASS_NAME],
+                                transform=transform)
+        test_ds = TestDataset(root_path=PATH, class_name=CLASS_NAME,
+                              transform=transform, img_size=IMG_SIZE)
 
-    # Normaliser
-    print("\nNormalisation...")
-    score_mean, score_std = compute_norm_stats(teacher, student, train_loader, DEVICE)
+        train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+        test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Évaluer
-    print("\nÉvaluation...")
-    results = evaluate(teacher, student, test_loader, DEVICE, score_mean, score_std)
+        teacher = Teacher().to(DEVICE).eval()
+        student = Student().to(DEVICE)
 
-    print(f"\n{'='*40}")
-    print(f"  RÉSULTATS — {CLASS_NAME}")
-    print(f"{'='*40}")
-    print(f"  Image AUROC : {results['image_auroc']:.4f}")
-    print(f"  Pixel AUROC : {results['pixel_auroc']:.4f}")
-    print(f"  Image F1    : {results['image_f1']:.4f}")
-    print(f"  Seuil       : {results['threshold']:.4f}")
-    print(f"{'='*40}")
+        print("Entraînement...")
+        train(teacher, student, train_loader, EPOCHS, DEVICE)
 
-    # Sauvegarder
-    torch.save(student.state_dict(), f"student_{CLASS_NAME}.pth")
-    print(f"\nSauvegardé : student_{CLASS_NAME}.pth")
+        print("\nNormalisation...")
+        score_mean, score_std = compute_norm_stats(teacher, student, train_loader, DEVICE)
+
+        print("\nÉvaluation...")
+        results = evaluate(teacher, student, test_loader, DEVICE, score_mean, score_std)
+
+        all_metrics[CLASS_NAME] = results
+        all_raw[CLASS_NAME] = {
+            "img_scores": results["img_scores"],
+            "img_labels": results["img_labels"],
+            "px_scores": results["px_scores"],
+            "px_labels": results["px_labels"],
+        }
+
+        # Graphes par classe
+        save_confusion_matrix(results["img_labels"], results["img_scores"],
+                              results["threshold"], CLASS_NAME)
+        save_roc_curve(results["img_labels"], results["img_scores"], CLASS_NAME)
+        save_pixel_roc_curve(results["px_labels"], results["px_scores"], CLASS_NAME)
+
+        print(f"  Image AUROC : {results['image_auroc']:.4f}")
+        print(f"  Pixel AUROC : {results['pixel_auroc']:.4f}")
+        print(f"  Image F1    : {results['image_f1']:.4f}")
+
+        torch.save(student.state_dict(), f"student_{CLASS_NAME}.pth")
+
+    # Graphes comparatifs
+    print("\nGénération des graphes comparatifs...")
+    save_comparison_roc(all_raw)
+    save_summary_bar_chart(all_metrics)
+
+    # Tableau récap
+    print(f"\n{'='*60}")
+    print(f"  {'Classe':<15} {'Img AUROC':>10} {'Px AUROC':>10} {'Img F1':>10}")
+    print(f"  {'-'*45}")
+    for cls, r in all_metrics.items():
+        print(f"  {cls:<15} {r['image_auroc']:>10.4f} {r['pixel_auroc']:>10.4f} {r['image_f1']:>10.4f}")
+
+    mean_img = np.mean([r['image_auroc'] for r in all_metrics.values()])
+    mean_px = np.mean([r['pixel_auroc'] for r in all_metrics.values()])
+    mean_f1 = np.mean([r['image_f1'] for r in all_metrics.values()])
+    print(f"  {'-'*45}")
+    print(f"  {'MOYENNE':<15} {mean_img:>10.4f} {mean_px:>10.4f} {mean_f1:>10.4f}")
+    print(f"{'='*60}")
