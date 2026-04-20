@@ -12,16 +12,16 @@ import os
 
 from pathlib import Path
 from PIL import Image
+from src.utils.const import PATH,CLASSES
 
 
 #======================
 
-PATH = "data/"
 
 class TrainDataset(Dataset):
     """
     """
-    def __init__(self, root_path, classes, transform=None, multiplier=1):
+    def __init__(self, root_path = PATH, classes = CLASSES, transform=None, multiplier=1):
         self.root_path = Path(root_path)
         self.classes = classes
         self.transform = transform
@@ -31,7 +31,7 @@ class TrainDataset(Dataset):
         
         self.samples = []
         for cls in classes:
-            for img_path in self.root_path.glob(f'{cls}/train/*.jpg'):
+            for img_path in self.root_path.glob(f'{cls}/train/*/*.png'):
                 self.samples.append((img_path, self.class_to_idx[cls]))
         
         print(f"Dataset chargé : {len(self.samples)} images physiques.")
@@ -55,7 +55,7 @@ class TrainDataset(Dataset):
         return image, label
 
 
-def check_images(path):
+def check_images(path = PATH):
     nb_image = 0
     for root, dirs, files in os.walk(path):
         for file in files:
@@ -69,3 +69,6 @@ def check_images(path):
                 nb_image += 1
     print("all_images (",nb_image,") are valid")
 
+if __name__ == "__main__":
+    check_images(PATH)
+    mvtecad_dataset = TrainDataset()
