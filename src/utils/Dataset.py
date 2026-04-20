@@ -20,6 +20,7 @@ from src.utils.const import PATH,CLASSES
 
 class TrainDataset(Dataset):
     """
+    data set for the training 
     """
     def __init__(self, root_path = PATH, classes = CLASSES, transform=None, multiplier=1):
         self.root_path = Path(root_path)
