@@ -84,8 +84,7 @@ TRANSFORM = T.Compose([
 def compute_score(heatmap: torch.Tensor) -> float:
     flat = heatmap.reshape(-1)
     topk = max(1, int(0.01 * flat.numel()))
-    score_raw = flat.topk(topk).values.mean()
-    return torch.sigmoid(score_raw).item()
+    return flat.topk(topk).values.mean().item()
 
 
 def make_overlay(original_img: Image.Image, heatmap_tensor: torch.Tensor) -> Image.Image:
@@ -96,7 +95,7 @@ def make_overlay(original_img: Image.Image, heatmap_tensor: torch.Tensor) -> Ima
     return Image.blend(original_img.convert("RGB"), heatmap_pil, alpha=0.5)
 
 
-# ── UI ──────────────────────────────────────────────────────────────────────
+#  UI 
 
 st.title("Détection de défauts — EfficientAD")
 st.caption("Modèle : Teacher (ResNet18) + Student entraîné sur images normales")
@@ -108,7 +107,8 @@ class_name = st.selectbox(
 
 uploaded = st.file_uploader("Charger une image (PNG ou JPG)", type=["png", "jpg", "jpeg"])
 
-threshold = st.slider("Seuil d'anomalie", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
+sensitivity = st.slider("Sensibilité", min_value=0.0, max_value=0.5, value=0.05, step=0.005,
+                        help="Plus la valeur est haute, plus le modèle détecte d'anomalies.")
 
 if uploaded is not None and st.button("Analyser"):
     try:
@@ -138,7 +138,7 @@ if uploaded is not None and st.button("Analyser"):
     col1.image(img, caption="Image originale", use_container_width=True)
     col2.image(overlay, caption="Heatmap d'anomalie", use_container_width=True)
 
-    if score >= threshold:
+    if score >= sensitivity:
         st.error(f"Défectueuse — Score : {score:.3f}")
     else:
         st.success(f"Normale — Score : {score:.3f}")
