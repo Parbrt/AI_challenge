@@ -238,10 +238,14 @@ def evaluate(teacher, student, test_loader, device, score_mean, score_std):
 
 
 if __name__ == "__main__":
+    
+    torch.manual_seed(42)
+    np.random.seed(42)
+    torch.backends.cudnn.deterministic = True
 
     RUN_CLASSES = ["bottle", "carpet", "hazelnut", "screw", "cable"]
-    EPOCHS = 50
-    BATCH_SIZE = 16
+    EPOCHS = 30
+    BATCH_SIZE = 32
     IMG_SIZE = 256
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -298,7 +302,12 @@ if __name__ == "__main__":
         print(f"  Pixel AUROC : {results['pixel_auroc']:.4f}")
         print(f"  Image F1    : {results['image_f1']:.4f}")
 
-        torch.save(student.state_dict(), f"student_{CLASS_NAME}.pth")
+        torch.save({
+            "student": student.state_dict(),
+            "threshold": results["threshold"],
+            "score_mean": score_mean.cpu(),
+            "score_std": score_std.cpu(),
+        }, f"student_{CLASS_NAME}.pth")
 
     # Graphes comparatifs
     print("\nGénération des graphes comparatifs...")
