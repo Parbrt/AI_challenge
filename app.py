@@ -40,6 +40,7 @@ class Student(nn.Module):
         return self.net(x)
 
 
+@torch.no_grad()
 def get_anomaly_map(teacher, student, images):
     teacher_out = teacher(images)
     student_out = student(images)
@@ -62,13 +63,15 @@ def load_teacher():
 
 @st.cache_resource
 def load_student(class_name):
-    _, device = load_teacher()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model_path = f"src/model/student_{class_name}.pth"
     student = Student().to(device)
     student.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     student.eval()
     return student
 
+
+_COLORMAP = plt.get_cmap("jet")
 
 TRANSFORM = T.Compose([
     T.Resize((256, 256)),
@@ -87,7 +90,6 @@ def compute_score(heatmap: torch.Tensor) -> float:
 def make_overlay(original_img: Image.Image, heatmap_tensor: torch.Tensor) -> Image.Image:
     heatmap_np = heatmap_tensor.cpu().numpy()
     heatmap_norm = (heatmap_np - heatmap_np.min()) / (heatmap_np.max() - heatmap_np.min() + 1e-8)
-    colormap = plt.get_cmap("jet")
-    heatmap_rgb = (colormap(heatmap_norm)[:, :, :3] * 255).astype(np.uint8)
-    heatmap_pil = Image.fromarray(heatmap_rgb).resize(original_img.size, Image.BILINEAR)
+    heatmap_rgb = (_COLORMAP(heatmap_norm)[:, :, :3] * 255).astype(np.uint8)
+    heatmap_pil = Image.fromarray(heatmap_rgb).resize(original_img.size, Image.Resampling.BILINEAR)
     return Image.blend(original_img.convert("RGB"), heatmap_pil, alpha=0.5)
