@@ -9,7 +9,7 @@ CLASSES = [
     "grid",
     "hazelnut",
     "leather",
-    "metal Nut",
+    "metal_nut",
     "pill",
     "screw",
     "tile",
