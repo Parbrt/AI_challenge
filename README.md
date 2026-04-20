@@ -19,7 +19,7 @@ streamlit run app.py
 L'application permet de :
 1. Sélectionner une classe produit (bottle, cable, carpet, hazelnut, screw)
 2. Charger une image PNG ou JPG
-3. Ajuster le seuil de détection (slider 0.0–1.0)
+3. Ajuster le seuil de détection (slider 0.0–0.5)
 4. Obtenir un verdict (Normale / Défectueuse) avec score et heatmap d'anomalie
 
 ## Classes disponibles
