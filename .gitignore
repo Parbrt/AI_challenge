@@ -3,3 +3,5 @@ shell.nix
 __pychache__/
 
 .venv/
+
+data/*/
