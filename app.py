@@ -6,7 +6,7 @@ import torchvision.models as models
 import torchvision.transforms as T
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 
 class Teacher(nn.Module):
@@ -111,8 +111,9 @@ threshold = st.slider("Seuil d'anomalie", min_value=0.0, max_value=1.0, value=0.
 
 if uploaded is not None and st.button("Analyser"):
     try:
+        uploaded.seek(0)
         img = Image.open(uploaded).convert("RGB")
-    except Exception:
+    except (UnidentifiedImageError, OSError):
         st.error("Impossible de lire l'image. Vérifiez que le fichier est valide.")
         st.stop()
 
@@ -122,20 +123,21 @@ if uploaded is not None and st.button("Analyser"):
     except FileNotFoundError:
         st.error(f"Modèle introuvable : `src/model/student_{class_name}.pth`")
         st.stop()
+    except (RuntimeError, Exception) as e:
+        st.error(f"Erreur lors du chargement du modèle : {e}")
+        st.stop()
 
-    img_tensor = TRANSFORM(img).unsqueeze(0).to(device)
-
-    with torch.no_grad():
+    with st.spinner("Analyse en cours…"):
+        img_tensor = TRANSFORM(img).unsqueeze(0).to(device)
         heatmap = get_anomaly_map(teacher, student, img_tensor)[0]
+        score = compute_score(heatmap)
+        overlay = make_overlay(img, heatmap)
 
-    score = compute_score(heatmap)
-    overlay = make_overlay(img, heatmap)
+    col1, col2 = st.columns(2)
+    col1.image(img, caption="Image originale", use_container_width=True)
+    col2.image(overlay, caption="Heatmap d'anomalie", use_container_width=True)
 
     if score >= threshold:
         st.error(f"Défectueuse — Score : {score:.3f}")
     else:
         st.success(f"Normale — Score : {score:.3f}")
-
-    col1, col2 = st.columns(2)
-    col1.image(img, caption="Image originale", use_container_width=True)
-    col2.image(overlay, caption="Heatmap d'anomalie", use_container_width=True)
