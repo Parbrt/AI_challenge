@@ -1,3 +1,4 @@
+from pathlib import Path
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -64,7 +65,7 @@ def load_teacher():
 @st.cache_resource
 def load_student(class_name):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model_path = f"src/model/student_{class_name}.pth"
+    model_path = Path(__file__).parent / "src" / "model" / f"student_{class_name}.pth"
     student = Student().to(device)
     student.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     student.eval()
@@ -123,7 +124,7 @@ if uploaded is not None and st.button("Analyser"):
     except FileNotFoundError:
         st.error(f"Modèle introuvable : `src/model/student_{class_name}.pth`")
         st.stop()
-    except (RuntimeError, Exception) as e:
+    except RuntimeError as e:
         st.error(f"Erreur lors du chargement du modèle : {e}")
         st.stop()
 
