@@ -1,6 +1,8 @@
 shell.nix
 
-__pychache__/
+__pycache__/
+
+*/pycache/
 
 .venv/
 
